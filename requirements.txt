@@ -15,3 +15,4 @@ chromadb
 tiktoken
 langchain_classic
 langchain_openai
+streamlit[pdf]

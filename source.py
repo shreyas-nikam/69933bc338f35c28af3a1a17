@@ -1,10 +1,10 @@
-import fitz # PyMuPDF (pypdfium2 is its backend)
+import fitz  # PyMuPDF (pypdfium2 is its backend)
 import re
 import os
 from openai import OpenAI
 from langchain_classic.text_splitter import RecursiveCharacterTextSplitter
-from chromadb import Client, Documents, EmbeddingFunction, Embeddings
-from chromadb.api.models.Collection import Collection # Import Collection
+from chromadb import Client, Documents, EmbeddingFunction, Embeddings, PersistentClient
+from chromadb.api.models.Collection import Collection  # Import Collection
 import tiktoken
 import pandas as pd
 import json
@@ -21,20 +21,25 @@ MODEL_PRICING = {
     'gpt-3.5-turbo': {'input_per_1k_tokens': 0.0005, 'output_per_1k_tokens': 0.0015},
 }
 
+
 class MyEmbeddingFunction(EmbeddingFunction):
     """
     Custom embedding function for ChromaDB to use OpenAIEmbeddings.
     """
+
     def __init__(self, model_name: str = 'text-embedding-ada-002', openai_api_key: Optional[str] = None):
         if not openai_api_key:
             openai_api_key = os.environ.get("OPENAI_API_KEY")
         if not openai_api_key:
-            raise ValueError("OpenAI API key not provided. Set OPENAI_API_KEY environment variable or pass it to MyEmbeddingFunction.")
-        self.embedder = OpenAIEmbeddings(model=model_name, openai_api_key=openai_api_key)
+            raise ValueError(
+                "OpenAI API key not provided. Set OPENAI_API_KEY environment variable or pass it to MyEmbeddingFunction.")
+        self.embedder = OpenAIEmbeddings(
+            model=model_name, openai_api_key=openai_api_key)
 
     def __call__(self, input: Documents) -> Embeddings:
         # Use embed_documents method for OpenAIEmbeddings
         return self.embedder.embed_documents(input)
+
 
 def parse_10k_sections(filepath: str) -> Dict[str, str]:
     """
@@ -57,13 +62,33 @@ def parse_10k_sections(filepath: str) -> Dict[str, str]:
 
     # Common 10-K section headers (regex patterns for robust matching)
     section_patterns = {
-        'Item 1': r'Item\s+1[\.\s]+Business',
-        'Item 1A': r'Item\s+1A[\.\s]+Risk\s+Factors',
-        'Item 7': r'Item\s+7[\.\s]+Management.?s\s+Discussion\s+and\s+Analysis',
-        'Item 7A': r'Item\s+7A[\.\s]+Quantitative\s+and\s+Qualitative\s+Disclosures\s+About\s+Market\s+Risk',
-        'Item 8': r'Item\s+8[\.\s]+Financial\s+Statements\s+and\s+Supplementary\s+Data',
-        'Item 9': r'Item\s+9[\.\s]+Changes\s+in\s+and\s+Disagreements\s+With\s+Accountants\s+on\s+Accounting\s+and\s+Financial\s+Disclosure',
-        'Item 11': r'Item\s+11[\.\s]+Executive\s+Compensation',
+        # PART I
+        "Item 1":  r"(?i)\bItem\s+1\b[\.\:\-\s]+Business\b",
+        "Item 1A": r"(?i)\bItem\s+1A\b[\.\:\-\s]+Risk\s+Factors\b",
+        "Item 1B": r"(?i)\bItem\s+1B\b[\.\:\-\s]+Unresolved\s+Staff\s+Comments\b",
+        "Item 2":  r"(?i)\bItem\s+2\b[\.\:\-\s]+Properties\b",
+        "Item 3":  r"(?i)\bItem\s+3\b[\.\:\-\s]+Legal\s+Proceedings\b",
+        "Item 4":  r"(?i)\bItem\s+4\b[\.\:\-\s]+Mine\s+Safety\s+Disclosures\b",
+
+        # PART II
+        "Item 5":  r"(?i)\bItem\s+5\b[\.\:\-\s]+Market\s+for\s+Registrant['’]s\s+Common\s+Equity.*?Related\s+Stockholder\s+Matters.*?Issuer\s+Purchases",
+        "Item 6":  r"(?i)\bItem\s+6\b[\.\:\-\s]+(?:Reserved|Selected\s+Financial\s+Data)\b",
+        "Item 7":  r"(?i)\bItem\s+7\b[\.\:\-\s]+Management['’]s\s+Discussion\s+and\s+Analysis\s+of\s+Financial\s+Condition\s+and\s+Results\s+of\s+Operations\b",
+        "Item 7A": r"(?i)\bItem\s+7A\b[\.\:\-\s]+Quantitative\s+and\s+Qualitative\s+Disclosures\s+About\s+Market\s+Risk\b",
+        "Item 8":  r"(?i)\bItem\s+8\b[\.\:\-\s]+Financial\s+Statements\s+and\s+Supplementary\s+Data\b",
+        "Item 9":  r"(?i)\bItem\s+9\b[\.\:\-\s]+Changes\s+in\s+and\s+Disagreements\s+With\s+Accountants\s+on\s+Accounting\s+and\s+Financial\s+Disclosure\b",
+        "Item 9A": r"(?i)\bItem\s+9A\b[\.\:\-\s]+Controls\s+and\s+Procedures\b",
+        "Item 9B": r"(?i)\bItem\s+9B\b[\.\:\-\s]+Other\s+Information\b",
+
+        # PART III
+        "Item 10": r"(?i)\bItem\s+10\b[\.\:\-\s]+Directors,\s*Executive\s+Officers\s+and\s+Corporate\s+Governance\b",
+        "Item 11": r"(?i)\bItem\s+11\b[\.\:\-\s]+Executive\s+Compensation\b",
+        "Item 12": r"(?i)\bItem\s+12\b[\.\:\-\s]+Security\s+Ownership\s+of\s+Certain\s+Beneficial\s+Owners\s+and\s+Management\s+and\s+Related\s+Stockholder\s+Matters\b",
+        "Item 13": r"(?i)\bItem\s+13\b[\.\:\-\s]+Certain\s+Relationships\s+and\s+Related\s+Transactions,\s*and\s+Director\s+Independence\b",
+        "Item 14": r"(?i)\bItem\s+14\b[\.\:\-\s]+Principal\s+Accountant\s+Fees\s+and\s+Services\b",
+
+        # PART IV
+        "Item 15": r"(?i)\bItem\s+15\b[\.\:\-\s]+Exhibits(?:\s+and\s+Financial\s+Statement\s+Schedules)?\b",
     }
 
     positions = []
@@ -85,15 +110,17 @@ def parse_10k_sections(filepath: str) -> Dict[str, str]:
 
     return sections
 
+
 def _create_dummy_pdf_if_not_exists(filename: str, content: str) -> bool:
     """
     Creates a dummy PDF file for demonstration purposes if it doesn't already exist.
     Returns True if created or exists, False if an error occurred.
     """
     if os.path.exists(filename):
-        print(f"PDF file '{filename}' already exists. Skipping dummy creation.")
+        print(
+            f"PDF file '{filename}' already exists. Skipping dummy creation.")
         return True
-    
+
     try:
         doc = fitz.open()
         page = doc.new_page()
@@ -103,8 +130,10 @@ def _create_dummy_pdf_if_not_exists(filename: str, content: str) -> bool:
         print(f"Created dummy PDF: {filename}")
         return True
     except Exception as e:
-        print(f"Error creating dummy PDF: {e}. Please ensure PyMuPDF is installed correctly.")
+        print(
+            f"Error creating dummy PDF: {e}. Please ensure PyMuPDF is installed correctly.")
         return False
+
 
 def chunk_and_embed_sections(
     sections: Dict[str, str],
@@ -149,7 +178,8 @@ def chunk_and_embed_sections(
             })
 
     client = chroma_client if chroma_client else Client()
-    collection = client.get_or_create_collection(name=collection_name, embedding_function=embedder_func)
+    collection = client.get_or_create_collection(
+        name=collection_name, embedding_function=embedder_func)
 
     texts = [c['text'] for c in all_chunks]
     metadatas = [c['metadata'] for c in all_chunks]
@@ -161,11 +191,13 @@ def chunk_and_embed_sections(
             metadatas=metadatas,
             ids=ids
         )
-        print(f"Indexed {collection.count()} chunks across {len(sections)} sections in collection '{collection_name}'.")
+        print(
+            f"Indexed {collection.count()} chunks across {len(sections)} sections in collection '{collection_name}'.")
     else:
         print("No chunks to index.")
 
     return collection
+
 
 def retrieve(
     topic_query: str,
@@ -190,7 +222,8 @@ def retrieve(
     """
     query_embedding = embedder_func([topic_query])[0]
 
-    where_filter = {"section": {"$in": section_filter}} if section_filter else None
+    where_filter = {"section": {"$in": section_filter}
+                    } if section_filter else None
 
     results = collection.query(
         query_embeddings=[query_embedding],
@@ -208,6 +241,7 @@ def retrieve(
                 'distance': results['distances'][0][i]
             })
     return retrieved_chunks
+
 
 def rag_summarize(
     topic_query: str,
@@ -236,7 +270,8 @@ def rag_summarize(
     Returns:
         Dict[str, Any]: A dictionary containing the summary, cost, chunks used, etc.
     """
-    retrieved_chunks = retrieve(topic_query, collection, embedder_func, section_filter, k)
+    retrieved_chunks = retrieve(
+        topic_query, collection, embedder_func, section_filter, k)
 
     if not retrieved_chunks:
         return {
@@ -269,12 +304,15 @@ RULES:
         )
     context = "\n\n---\n\n".join(context_parts)
 
+    # print(context)
+
     messages = [
         {"role": "system", "content": SUMMARIZE_SYSTEM},
         {"role": "user", "content": f"Topic: {topic_query}\n\nProduce a focused analytical summary of this topic based on the following 10-K excerpts.\n\nEXCERPTS:\n{context}"}
     ]
 
-    current_model_pricing = model_pricing_dict.get(model, model_pricing_dict['gpt-4o'])
+    current_model_pricing = model_pricing_dict.get(
+        model, model_pricing_dict['gpt-4o'])
 
     try:
         response = llm_client.chat.completions.create(
@@ -288,9 +326,11 @@ RULES:
         input_tokens = response.usage.prompt_tokens
         completion_tokens = response.usage.completion_tokens
         cost = (input_tokens / 1000 * current_model_pricing['input_per_1k_tokens']) + \
-               (completion_tokens / 1000 * current_model_pricing['output_per_1k_tokens'])
+               (completion_tokens / 1000 *
+                current_model_pricing['output_per_1k_tokens'])
 
-        sections_covered = list(set(c['metadata']['section'] for c in retrieved_chunks))
+        sections_covered = list(set(c['metadata']['section']
+                                for c in retrieved_chunks))
 
         return {
             'topic': topic_query,
@@ -312,6 +352,7 @@ RULES:
             'input_tokens': 0,
             'retrieved_chunks': retrieved_chunks
         }
+
 
 def full_context_summarize(
     topic: str,
@@ -342,9 +383,11 @@ def full_context_summarize(
     truncated_text = full_text
     if len(full_text_tokens) > max_input_llm_tokens:
         truncated_text = enc.decode(full_text_tokens[:max_input_llm_tokens])
-        print(f"Warning: Full 10-K truncated from {len(full_text_tokens):,} to {max_input_llm_tokens:,} tokens for full-context summarization.")
+        print(
+            f"Warning: Full 10-K truncated from {len(full_text_tokens):,} to {max_input_llm_tokens:,} tokens for full-context summarization.")
 
-    current_model_pricing = model_pricing_dict.get(model, model_pricing_dict['gpt-4o'])
+    current_model_pricing = model_pricing_dict.get(
+        model, model_pricing_dict['gpt-4o'])
 
     SUMMARIZE_SYSTEM = "You are a senior equity research analyst producing targeted analysis from SEC 10-K filings."
     messages = [
@@ -363,13 +406,15 @@ def full_context_summarize(
         input_tokens = response.usage.prompt_tokens
         completion_tokens = response.usage.completion_tokens
         cost = (input_tokens / 1000 * current_model_pricing['input_per_1k_tokens']) + \
-               (completion_tokens / 1000 * current_model_pricing['output_per_1k_tokens'])
+               (completion_tokens / 1000 *
+                current_model_pricing['output_per_1k_tokens'])
         return {
             'topic': topic,
             'summary': summary,
             'cost': cost,
             'input_tokens': input_tokens,
-            'full_text_tokens': len(full_text_tokens) # Original full text token count
+            # Original full text token count
+            'full_text_tokens': len(full_text_tokens)
         }
     except Exception as e:
         print(f"Error during full-context LLM summarization: {e}")
@@ -380,6 +425,7 @@ def full_context_summarize(
             'input_tokens': 0,
             'full_text_tokens': len(full_text_tokens)
         }
+
 
 def assess_summary_quality(
     summary: str,
@@ -431,11 +477,13 @@ Return JSON: {{{{"breadth": X, "depth": X, "completeness": X, "missing_topics": 
         coverage = json.loads(response_coverage.choices[0].message.content)
     except Exception as e:
         print(f"Error during coverage assessment: {e}")
-        coverage = {"breadth": "N/A", "depth": "N/A", "completeness": "N/A", "missing_topics": [f"Error: {e}"]}
+        coverage = {"breadth": "N/A", "depth": "N/A",
+                    "completeness": "N/A", "missing_topics": [f"Error: {e}"]}
 
     # --- Faithfulness Assessment ---
     # Prepare excerpts for faithfulness check (only first few chunks to save tokens)
-    source_excerpts = "\n".join([textwrap.dedent(c['text'])[:500] + "..." for c in retrieved_chunks[:5]])
+    source_excerpts = "\n".join(
+        [textwrap.dedent(c['text'])[:500] + "..." for c in retrieved_chunks[:5]])
 
     faithfulness = {}
     if source_excerpts:
@@ -459,25 +507,31 @@ Return JSON: {{{{"unsupported_claims": ["..."], "total_claims": N, "supported_cl
                 response_format={"type": "json_object"},
                 max_tokens=500
             )
-            faithfulness = json.loads(response_faithfulness.choices[0].message.content)
+            faithfulness = json.loads(
+                response_faithfulness.choices[0].message.content)
         except Exception as e:
             print(f"Error during faithfulness assessment: {e}")
-            faithfulness = {"unsupported_claims": [f"Error: {e}"], "total_claims": 1, "supported_claims": 0}
+            faithfulness = {"unsupported_claims": [
+                f"Error: {e}"], "total_claims": 1, "supported_claims": 0}
     else:
-        faithfulness = {"unsupported_claims": ["No source chunks provided for faithfulness assessment."], "total_claims": 0, "supported_claims": 0}
-
+        faithfulness = {"unsupported_claims": [
+            "No source chunks provided for faithfulness assessment."], "total_claims": 0, "supported_claims": 0}
 
     print(f"SUMMARY QUALITY ASSESSMENT: {topic[:50]}...")
-    print(f" Coverage: Breadth={coverage.get('breadth', 'N/A')}/5, Depth={coverage.get('depth', 'N/A')}/5, Completeness={coverage.get('completeness', 'N/A')}/5")
+    print(
+        f" Coverage: Breadth={coverage.get('breadth', 'N/A')}/5, Depth={coverage.get('depth', 'N/A')}/5, Completeness={coverage.get('completeness', 'N/A')}/5")
     if coverage.get('missing_topics') and any(coverage['missing_topics']):
-        print(f" Missing: {', '.join(topic for topic in coverage['missing_topics'] if topic)}")
+        print(
+            f" Missing: {', '.join(topic for topic in coverage['missing_topics'] if topic)}")
 
     supported_claims = faithfulness.get('supported_claims', 0)
     total_claims = faithfulness.get('total_claims', 1)
     faithfulness_score = supported_claims / max(1, total_claims)
-    print(f" Faithfulness: {supported_claims}/{total_claims} claims supported ({faithfulness_score:.0%})")
+    print(
+        f" Faithfulness: {supported_claims}/{total_claims} claims supported ({faithfulness_score:.0%})")
     if faithfulness.get('unsupported_claims') and any(faithfulness['unsupported_claims']):
-        print(f" Unsupported Claims: {'; '.join(claim for claim in faithfulness['unsupported_claims'] if claim)}")
+        print(
+            f" Unsupported Claims: {'; '.join(claim for claim in faithfulness['unsupported_claims'] if claim)}")
     print("-" * 50)
 
     return {'coverage': coverage, 'faithfulness': faithfulness}
@@ -487,20 +541,24 @@ class TenKAnalyzer:
     """
     A class to encapsulate the workflow for analyzing 10-K filings using RAG and LLM summarization.
     """
+
     def __init__(self, openai_api_key: str, embedding_model: str = 'text-embedding-ada-002', llm_model: str = 'gpt-4o', collection_name: str = "tenk_sections_default"):
         if not openai_api_key:
             raise ValueError("OpenAI API key must be provided.")
-        
-        os.environ["OPENAI_API_KEY"] = openai_api_key # Set environment variable for OpenAIEmbeddings
+
+        # Set environment variable for OpenAIEmbeddings
+        os.environ["OPENAI_API_KEY"] = openai_api_key
         self.openai_api_key = openai_api_key
         self.client_llm = OpenAI(api_key=openai_api_key)
-        self.embedder_func = MyEmbeddingFunction(model_name=embedding_model, openai_api_key=openai_api_key)
+        self.embedder_func = MyEmbeddingFunction(
+            model_name=embedding_model, openai_api_key=openai_api_key)
         self.default_llm_model = llm_model
-        
-        self.chroma_client = Client() # In-memory client by default, can be configured for persistence
+
+        # In-memory client by default, can be configured for persistence
+        self.chroma_client = Client()
         self.collection_name = collection_name
         self.collection: Optional[Collection] = None
-        
+
         self.sections: Dict[str, str] = {}
         self.full_text: str = ""
         self.full_text_token_count: int = 0
@@ -511,9 +569,10 @@ class TenKAnalyzer:
         """
         if create_dummy_if_missing and not os.path.exists(filepath):
             if not dummy_content:
-                raise ValueError("Dummy content must be provided if create_dummy_if_missing is True and file is missing.")
+                raise ValueError(
+                    "Dummy content must be provided if create_dummy_if_missing is True and file is missing.")
             _create_dummy_pdf_if_not_exists(filepath, dummy_content)
-            
+
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"PDF file not found at {filepath}")
 
@@ -521,14 +580,15 @@ class TenKAnalyzer:
         doc = fitz.open(filepath)
         self.full_text = "".join([page.get_text() for page in doc])
         doc.close()
-        
+
         enc = tiktoken.encoding_for_model(self.default_llm_model)
         self.full_text_token_count = len(enc.encode(self.full_text))
 
         self.collection = chunk_and_embed_sections(
             self.sections, self.embedder_func, self.collection_name, self.chroma_client
         )
-        print(f"Document processing complete. Collection '{self.collection_name}' ready.")
+        print(
+            f"Document processing complete. Collection '{self.collection_name}' ready.")
 
     def get_rag_summary(
         self,
@@ -541,8 +601,9 @@ class TenKAnalyzer:
         Generates a summary for a given topic using RAG.
         """
         if not self.collection:
-            raise RuntimeError("ChromaDB collection not initialized. Call load_and_process_document first.")
-        
+            raise RuntimeError(
+                "ChromaDB collection not initialized. Call load_and_process_document first.")
+
         model_to_use = llm_model if llm_model else self.default_llm_model
         return rag_summarize(
             topic_query=topic_query,
@@ -564,8 +625,9 @@ class TenKAnalyzer:
         Generates a summary for a given topic by feeding the full document text to the LLM.
         """
         if not self.full_text:
-            raise RuntimeError("Document full text not loaded. Call load_and_process_document first.")
-        
+            raise RuntimeError(
+                "Document full text not loaded. Call load_and_process_document first.")
+
         model_to_use = llm_model if llm_model else self.default_llm_model
         return full_context_summarize(
             topic=topic,
@@ -585,35 +647,40 @@ class TenKAnalyzer:
         Generates a multi-aspect research brief based on predefined topics.
         """
         if not self.collection:
-            raise RuntimeError("ChromaDB collection not initialized. Call load_and_process_document first.")
+            raise RuntimeError(
+                "ChromaDB collection not initialized. Call load_and_process_document first.")
 
         research_brief_results = []
-        model_to_use = llm_model_for_brief if llm_model_for_brief else 'gpt-3.5-turbo' # Use a cheaper model for brief generation
-        
+        # Use a cheaper model for brief generation
+        model_to_use = llm_model_for_brief if llm_model_for_brief else 'gpt-3.5-turbo'
+
         print("\nGenerating Multi-Aspect Research Brief:")
         print("="*60)
 
         total_cost_brief = 0
         for topic_config in brief_topics:
-            print(f"\n--- Generating summary for: {topic_config.get('brief_label', topic_config['topic'])} ---")
+            print(
+                f"\n--- Generating summary for: {topic_config.get('brief_label', topic_config['topic'])} ---")
             result = self.get_rag_summary(
                 topic_query=topic_config['topic'],
                 section_filter=topic_config['sections'],
                 k=k_chunks,
                 llm_model=model_to_use
             )
-            result['label'] = topic_config.get('brief_label', topic_config['topic'])
+            result['label'] = topic_config.get(
+                'brief_label', topic_config['topic'])
             research_brief_results.append(result)
             total_cost_brief += result['cost']
 
-            print(f"  Input Tokens: {result['input_tokens']:,}, Cost: ${result['cost']:.4f}")
+            print(
+                f"  Input Tokens: {result['input_tokens']:,}, Cost: ${result['cost']:.4f}")
             print(f"  Sections Used: {', '.join(result['sections_covered'])}")
-        
+
         print("\n" + "="*60)
         print("10-K RESEARCH BRIEF GENERATED")
         print(f"Total cost for brief generation: ${total_cost_brief:.4f}")
         print("="*60)
-        
+
         return research_brief_results
 
     def compare_summarization_methods(
@@ -627,7 +694,8 @@ class TenKAnalyzer:
         Compares RAG-based summarization with full-context summarization for a given topic.
         """
         if not self.collection or not self.full_text:
-            raise RuntimeError("Document not fully processed. Call load_and_process_document first.")
+            raise RuntimeError(
+                "Document not fully processed. Call load_and_process_document first.")
 
         model_to_use = llm_model_for_comparison if llm_model_for_comparison else self.default_llm_model
 
@@ -650,8 +718,9 @@ class TenKAnalyzer:
         # Calculate comparison metrics
         rag_summary_words = len(rag_result['summary'].split())
         full_summary_words = len(full_context_result['summary'].split())
-        
-        relevant_section_text = ' '.join(self.sections.get(s, '') for s in sections_for_rag_filter)
+
+        relevant_section_text = ' '.join(self.sections.get(
+            s, '') for s in sections_for_rag_filter)
         n_relevant_section_words = len(relevant_section_text.split())
 
         comparison_data = {
@@ -676,7 +745,8 @@ class TenKAnalyzer:
         Assesses the quality (coverage and faithfulness) of each section in a research brief.
         """
         quality_results = []
-        model_to_use = llm_model_for_judging if llm_model_for_judging else 'gpt-3.5-turbo' # Use a cheaper model for judging
+        # Use a cheaper model for judging
+        model_to_use = llm_model_for_judging if llm_model_for_judging else 'gpt-3.5-turbo'
 
         print("\nAssessing Quality of Each Research Brief Section:")
         print("=" * 60)
@@ -685,7 +755,8 @@ class TenKAnalyzer:
             print(f"\nEvaluating: {section_summary['label']}")
             assessment = assess_summary_quality(
                 summary=section_summary['summary'],
-                retrieved_chunks=section_summary.get('retrieved_chunks', []), # Pass chunks if available
+                retrieved_chunks=section_summary.get(
+                    'retrieved_chunks', []),  # Pass chunks if available
                 topic=section_summary['topic'],
                 llm_client=self.client_llm,
                 model=model_to_use
@@ -702,6 +773,8 @@ class TenKAnalyzer:
         return quality_results
 
 # --- Display Helper Functions ---
+
+
 def display_comparison_results(comparison_data: Dict[str, Any]):
     """Displays the formatted comparison between RAG and full-context summaries."""
     metrics = comparison_data['metrics']
@@ -711,18 +784,24 @@ def display_comparison_results(comparison_data: Dict[str, Any]):
 
     print(f"\n{'Metric':<25s} {'RAG':>12s} {'Full-Context':>12s}")
     print("-" * 50)
-    print(f"{'Input tokens':<25s} {metrics['rag_input_tokens']:>12,} {metrics['full_context_input_tokens']:>12,}")
-    print(f"{'Cost':<25s} ${metrics['rag_cost']:>11.4f} ${metrics['full_context_cost']:>11.4f}")
+    print(
+        f"{'Input tokens':<25s} {metrics['rag_input_tokens']:>12,} {metrics['full_context_input_tokens']:>12,}")
+    print(
+        f"{'Cost':<25s} ${metrics['rag_cost']:>11.4f} ${metrics['full_context_cost']:>11.4f}")
 
-    cost_ratio = metrics['full_context_cost'] / max(0.0001, metrics['rag_cost'])
+    cost_ratio = metrics['full_context_cost'] / \
+        max(0.0001, metrics['rag_cost'])
     print(f"{'Cost ratio':<25s} {'1.0x':>12s} {cost_ratio:>11.1f}x")
 
-    print(f"{'Summary words':<25s} {metrics['rag_summary_words']:>12,} {metrics['full_context_summary_words']:>12,}")
-    print(f"{'Has citations':<25s} {'Yes':>12s} {'No':>12s}") # RAG includes citations, full-context typically doesn't
+    print(
+        f"{'Summary words':<25s} {metrics['rag_summary_words']:>12,} {metrics['full_context_summary_words']:>12,}")
+    # RAG includes citations, full-context typically doesn't
+    print(f"{'Has citations':<25s} {'Yes':>12s} {'No':>12s}")
     print("-" * 50)
 
     if metrics['relevant_section_words'] > 0:
-        cr_rag = 1 - (metrics['rag_summary_words'] / metrics['relevant_section_words'])
+        cr_rag = 1 - (metrics['rag_summary_words'] /
+                      metrics['relevant_section_words'])
         print(f"{'RAG Compression Ratio':<25s} {'':>12s} {cr_rag:>11.2f}")
     else:
         print(f"{'RAG Compression Ratio':<25s} {'':>12s} {'N/A'}")
@@ -732,10 +811,11 @@ def display_comparison_results(comparison_data: Dict[str, Any]):
     print("\n--- Full-Context Summary ---")
     print(textwrap.fill(full_context_result['summary'], width=100))
 
+
 def display_research_brief(brief_results: List[Dict[str, Any]], company_name: str = "APPLE INC.", filing_year: str = "FY2024"):
     """Displays the formatted research brief."""
     total_cost_brief = sum(r['cost'] for r in brief_results)
-    
+
     print("\n" + "="*60)
     print(f"10-K RESEARCH BRIEF: {company_name} ({filing_year})")
     print(f"Generated via RAG | Total cost for brief: ${total_cost_brief:.4f}")
@@ -746,6 +826,36 @@ def display_research_brief(brief_results: List[Dict[str, Any]], company_name: st
         print(f"(Sources: {', '.join(section['sections_covered'])})")
         print(textwrap.fill(section['summary'], width=100))
         print()
+
+
+# Predefined research brief topics for 10-K analysis
+BRIEF_TOPICS = [
+    {
+        'topic': 'Key risk factors including competitive risks, regulatory risks, supply chain risks, and macroeconomic risks',
+        'sections': ['Item 1A'],
+        'brief_label': 'RISK FACTORS'
+    },
+    {
+        'topic': 'Liquidity position: cash, debt maturity, credit facilities, cash flow adequacy, capital expenditure plans',
+        'sections': ['Item 7', 'Item 7A'],
+        'brief_label': 'LIQUIDITY & CAPITAL'
+    },
+    {
+        'topic': 'Business segment performance: revenue by segment, growth rates, margin trends, geographic breakdown',
+        'sections': ['Item 7'],
+        'brief_label': 'SEGMENT PERFORMANCE'
+    },
+    {
+        'topic': 'Competitive position and business strategy: market share, new products, R&D investment, strategic initiatives',
+        'sections': ['Item 1', 'Item 7'],
+        'brief_label': 'STRATEGY & COMPETITION'
+    },
+    {
+        'topic': 'Accounting policy changes: new standards adopted, revenue recognition changes, significant estimates',
+        'sections': ['Item 8'],
+        'brief_label': 'ACCOUNTING CHANGES'
+    }
+]
 
 
 # --- Main execution block for demonstration ---
@@ -782,7 +892,8 @@ Item 9. Changes in and Disagreements With Accountants on Accounting and Financia
 No significant changes or disagreements with accountants.
 """
 
-    analyzer = TenKAnalyzer(openai_api_key=OPENAI_API_KEY, collection_name="aapl_10k_sections_demo", llm_model='gpt-3.5-turbo')
+    analyzer = TenKAnalyzer(openai_api_key=OPENAI_API_KEY,
+                            collection_name="aapl_10k_sections_demo", llm_model='gpt-3.5-turbo')
 
     try:
         analyzer.load_and_process_document(
@@ -803,12 +914,13 @@ No significant changes or disagreements with accountants.
                 temp_sections_dict[current_section] = []
             if current_section:
                 temp_sections_dict[current_section].append(line)
-        analyzer.sections = {k: "\n".join(v) for k, v in temp_sections_dict.items()}
+        analyzer.sections = {k: "\n".join(v)
+                             for k, v in temp_sections_dict.items()}
         analyzer.full_text = dummy_10k_content
         print("Parsed 10-K sections (from string directly):")
         for name, text in analyzer.sections.items():
             print(f"  {name}: {len(text.split()):,} words")
-        
+
         # If full text obtained via dummy_10k_content, then chunk and embed manually
         if analyzer.sections:
             analyzer.collection = chunk_and_embed_sections(
@@ -817,46 +929,18 @@ No significant changes or disagreements with accountants.
         else:
             print("Could not parse sections from dummy content. Exiting.")
             exit()
-        
+
         enc = tiktoken.encoding_for_model(analyzer.default_llm_model)
         analyzer.full_text_token_count = len(enc.encode(analyzer.full_text))
 
-
     # 1. Generate Research Brief
-    BRIEF_TOPICS = [
-        {
-            'topic': 'Key risk factors including competitive risks, regulatory risks, supply chain risks, and macroeconomic risks',
-            'sections': ['Item 1A'],
-            'brief_label': 'RISK FACTORS'
-        },
-        {
-            'topic': 'Liquidity position: cash, debt maturity, credit facilities, cash flow adequacy, capital expenditure plans',
-            'sections': ['Item 7', 'Item 7A'],
-            'brief_label': 'LIQUIDITY & CAPITAL'
-        },
-        {
-            'topic': 'Business segment performance: revenue by segment, growth rates, margin trends, geographic breakdown',
-            'sections': ['Item 7'],
-            'brief_label': 'SEGMENT PERFORMANCE'
-        },
-        {
-            'topic': 'Competitive position and business strategy: market share, new products, R&D investment, strategic initiatives',
-            'sections': ['Item 1', 'Item 7'],
-            'brief_label': 'STRATEGY & COMPETITION'
-        },
-        {
-            'topic': 'Accounting policy changes: new standards adopted, revenue recognition changes, significant estimates',
-            'sections': ['Item 8'],
-            'brief_label': 'ACCOUNTING CHANGES'
-        }
-    ]
-
     research_brief_results = analyzer.generate_research_brief(
         brief_topics=BRIEF_TOPICS,
-        llm_model_for_brief='gpt-3.5-turbo', # Use a cheaper model for multiple calls
+        llm_model_for_brief='gpt-3.5-turbo',  # Use a cheaper model for multiple calls
         k_chunks=8
     )
-    display_research_brief(research_brief_results, company_name="Apple Inc.", filing_year="FY2024")
+    display_research_brief(research_brief_results,
+                           company_name="Apple Inc.", filing_year="FY2024")
 
     # 2. Compare RAG vs. Full-Context Summarization
     topic_to_compare = "Key risk factors including competitive risks, regulatory risks, supply chain risks, and macroeconomic risks"
@@ -875,7 +959,7 @@ No significant changes or disagreements with accountants.
         brief_results=research_brief_results,
         llm_model_for_judging='gpt-3.5-turbo'
     )
-    
+
     # Example of accessing a specific assessment:
     # print("\nFirst brief section quality:")
     # print(json.dumps(quality_assessments[0], indent=2))

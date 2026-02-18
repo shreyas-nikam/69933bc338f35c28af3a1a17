@@ -128,7 +128,7 @@ quolab-lab29-10k-rag/
 ├── requirements.txt        # Python dependencies
 ├── README.md               # Project README file
 ├── .env                    # (Optional) For environment variables like OPENAI_API_KEY
-├── temp_10k.pdf            # Temporary storage for uploaded PDF files
+├── AAPL_10K.pdf            # Temporary storage for uploaded PDF files
 └── LICENSE                 # (Optional) Project license file
 ```
 

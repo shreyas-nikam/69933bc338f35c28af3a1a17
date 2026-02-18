@@ -125,7 +125,7 @@ if st.session_state['current_page'] == "Upload 10-K & Process":
             st.session_state['brief_results'] = [] # Reset brief results
 
         # Save the uploaded file temporarily
-        with open("temp_10k.pdf", "wb") as f:
+        with open("AAPL_10K.pdf", "wb") as f:
             f.write(uploaded_file.getbuffer())
         st.session_state['pdf_uploaded_name'] = uploaded_file.name
         
@@ -137,7 +137,7 @@ if st.session_state['current_page'] == "Upload 10-K & Process":
             else:
                 with st.spinner("Step 1/2: Parsing 10-K sections and extracting full text..."):
                     try:
-                        sections, full_text = parse_10k_sections("temp_10k.pdf")
+                        sections, full_text = parse_10k_sections("AAPL_10K.pdf")
                         st.session_state['parsed_sections'] = sections
                         st.session_state['full_text'] = full_text
                         st.success("10-K Sections Parsed!")
